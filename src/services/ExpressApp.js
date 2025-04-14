@@ -1,4 +1,3 @@
-// src/services/ExpressApp.js
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import CustomerRoute from '../routes/CustomerRoute.js';
@@ -6,20 +5,22 @@ import VendorRoute from '../routes/VendorRoute.js';
 import DeliveryRoute from '../routes/DeliveryRoute.js';
 import AdminRoute from '../routes/AdminRoute.js';
 import ShoppingRoute from '../routes/ShoppingRoutes.js';
-import multer from 'multer';
+import { config } from 'dotenv';
+
+config();
 
 const configureApp = async (app) => {
   console.log('Setting up Express middleware...');
+
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+    console.error('Missing Cloudinary configuration in .env');
+    process.exit(1);
+  }
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, './Uploads'),
-    filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname}`),
-  });
-
-  const upload = multer({ storage });
   app.use('/images', express.static('Uploads'));
 
   console.log('Registering routes...');

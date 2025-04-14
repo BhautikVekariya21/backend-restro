@@ -3,9 +3,10 @@ import Offer from '../models/Offer.js';
 import Order from '../models/Order.js';
 import Vendor from '../models/Vendor.js';
 import { FindVendor } from './AdminController.js';
-import { validatePassword } from '../utility/PasswordUnility.js';
-import { generateSignature } from '../utility/PasswordUnility.js'
-// src/controllers/VendorController.js
+import { validatePassword, generateSignature } from '../utility/PasswordUnility.js';
+import { uploadToCloudinary, deleteLocalFile } from '../utility/CloudinaryUtility.js';
+import fs from 'fs';
+
 export const VendorLogin = async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -51,14 +52,49 @@ export const UpdateVendorCoverImage = async (req, res) => {
     if (!files || files.length === 0) {
       return res.status(400).json({ message: 'No images uploaded' });
     }
-    const images = files.map((file) => file.filename);
-    vendor.coverImages.push(...images);
-    await vendor.save();
+
+    const imageUrls = [];
+    const failedFiles = [];
+
+    for (const file of files) {
+      try {
+        console.log(`Processing file: ${file.path} (original: ${file.originalname})`);
+        if (!fs.existsSync(file.path)) {
+          throw new Error(`File not found on server: ${file.path}`);
+        }
+        const url = await uploadToCloudinary(file.path, file.originalname);
+        if (!url.startsWith('https://res.cloudinary.com/')) {
+          throw new Error(`Invalid Cloudinary URL: ${url}`);
+        }
+        imageUrls.push(url);
+        deleteLocalFile(file.path);
+      } catch (error) {
+        console.error(`Failed to upload ${file.originalname}: ${error.message}`);
+        failedFiles.push(file.originalname);
+      }
+    }
+
+    if (imageUrls.length > 0) {
+      vendor.coverImages.push(...imageUrls);
+      await vendor.save();
+    }
+
+    if (failedFiles.length > 0) {
+      fs.appendFileSync('failed_uploads.log', `${new Date().toISOString()}: ${failedFiles.join(', ')} (Vendor: ${vendor._id})\n`);
+    }
+
     const vendorResponse = await Vendor.findById(vendor._id).select('-password -__v -createdAt -updatedAt');
+    if (failedFiles.length > 0) {
+      return res.status(207).json({
+        message: `Partial success: ${imageUrls.length} images uploaded, ${failedFiles.length} failed. Local files retained for failed uploads.`,
+        failedFiles,
+        vendor: vendorResponse,
+      });
+    }
     return res.status(200).json(vendorResponse);
   } catch (error) {
     console.error(`Error updating cover image: ${error.message}`);
-    return res.status(400).json({ message: 'Error updating cover image', error: error.message });
+    return res.status(400).json({ message: 'Error updating cover image, local files retained', error: error.message });
   }
 };
 
@@ -77,32 +113,62 @@ export const AddFood = async (req, res) => {
       return res.status(400).json({ message: 'Name and price are required' });
     }
     const files = req.files;
-    let images = [];
+    let imageUrls = [];
+    const failedFiles = [];
+
     if (files && files.length > 0) {
-      images = files.map((file) => file.filename);
+      for (const file of files) {
+        try {
+          console.log(`Processing file: ${file.path} (original: ${file.originalname})`);
+          if (!fs.existsSync(file.path)) {
+            throw new Error(`File not found on server: ${file.path}`);
+          }
+          const url = await uploadToCloudinary(file.path, file.originalname);
+          if (!url.startsWith('https://res.cloudinary.com/')) {
+            throw new Error(`Invalid Cloudinary URL: ${url}`);
+          }
+          imageUrls.push(url);
+          deleteLocalFile(file.path);
+        } catch (error) {
+          console.error(`Failed to upload ${file.originalname}: ${error.message}`);
+          failedFiles.push(file.originalname);
+        }
+      }
     }
+
     const food = await Food.create({
       vendorId: vendor._id,
       name,
       description,
       category,
-      price,
+      price: parseFloat(price),
       rating: 0,
-      readyTime,
+      readyTime: parseInt(readyTime) || 0,
       foodType,
-      images,
+      images: imageUrls,
     });
     vendor.foods.push(food._id);
     await vendor.save();
+
+    if (failedFiles.length > 0) {
+      fs.appendFileSync('failed_uploads.log', `${new Date().toISOString()}: ${failedFiles.join(', ')} (Vendor: ${vendor._id}, Food: ${food._id})\n`);
+    }
+
     const vendorResponse = await Vendor.findById(vendor._id).select('-password -__v -createdAt -updatedAt');
+    if (failedFiles.length > 0) {
+      return res.status(207).json({
+        message: `Food added, but ${failedFiles.length} images failed to upload. Local files retained for failed uploads.`,
+        failedFiles,
+        vendor: vendorResponse,
+      });
+    }
     return res.status(200).json(vendorResponse);
   } catch (error) {
     console.error(`Error adding food: ${error.message}`);
-    return res.status(400).json({ message: 'Error adding food', error: error.message });
+    return res.status(400).json({ message: 'Error adding food, local files retained', error: error.message });
   }
 };
 
-// Other functions remain unchanged (included for reference)
 export const GetVendorProfile = async (req, res) => {
   try {
     const user = req.user;
@@ -145,7 +211,6 @@ export const UpdateVendorProfile = async (req, res) => {
 export const UpdateVendorService = async (req, res) => {
   try {
     const user = req.user;
-    const { lat, lng } = req.body;
     if (!user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
@@ -154,12 +219,13 @@ export const UpdateVendorService = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
     existingVendor.serviceAvailable = !existingVendor.serviceAvailable;
-    if (lat !== undefined) existingVendor.lat = lat;
-    if (lng !== undefined) existingVendor.lng = lng;
-    await existingVendor.save();
+    if (req.body.lat !== undefined) existingVendor.lat = req.body.lat;
+    if (req.body.lng !== undefined) existingVendor.lng = req.body.lng;
+    await existingVendor.save(); // Fixed: Use existingVendor, not vendor
     const vendorResponse = await Vendor.findById(existingVendor._id).select('-password -__v -createdAt -updatedAt');
     return res.status(200).json(vendorResponse);
   } catch (error) {
+    console.error(`Error updating service: ${error.message}`);
     return res.status(400).json({ message: 'Error updating service', error: error.message });
   }
 };
@@ -293,6 +359,7 @@ export const AddOffer = async (req, res) => {
     });
     return res.status(200).json(offer);
   } catch (error) {
+    console.error(`Error adding offer: ${error.message}`);
     return res.status(400).json({ message: 'Error adding offer', error: error.message });
   }
 };
@@ -332,6 +399,7 @@ export const EditOffer = async (req, res) => {
     const result = await currentOffer.save();
     return res.status(200).json(result);
   } catch (error) {
+    console.error(`Error editing offer: ${error.message}`);
     return res.status(400).json({ message: 'Error editing offer', error: error.message });
   }
 };

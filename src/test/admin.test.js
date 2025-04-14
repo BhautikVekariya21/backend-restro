@@ -2,11 +2,11 @@ import request from 'supertest';
 import express from 'express';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import router from '../routes/adminRouter'; // Adjust path to your router file
+import router from '../routes/AdminRoute.js'; // Adjust path to your router file
 import Vendor from '../models/Vendor.js'; // Adjust path to your model file
 import Transaction from '../models/Transaction.js'; // Adjust path to your model file
 import DeliveryUser from '../models/DeliveryUser.js'; // Adjust path to your model file  
-import { generateSalt, generatePassword } from '../utility/PasswordUtility.js'; // Adjust path to your utility file
+import { generatePassword } from '../utility/PasswordUnility.js'
 // Mock utility functions
 jest.mock('../utility', () => ({
   generateSalt: jest.fn(),
