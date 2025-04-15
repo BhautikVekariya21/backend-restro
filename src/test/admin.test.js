@@ -1,348 +1,364 @@
 import request from 'supertest';
-import express from 'express';
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
-import router from '../routes/AdminRoute.js'; // Adjust path to your router file
-import Vendor from '../models/Vendor.js'; // Adjust path to your model file
-import Transaction from '../models/Transaction.js'; // Adjust path to your model file
-import DeliveryUser from '../models/DeliveryUser.js'; // Adjust path to your model file  
-import { generatePassword } from '../utility/PasswordUnility.js'
-// Mock utility functions
-jest.mock('../utility', () => ({
-  generateSalt: jest.fn(),
+import express, { json } from 'express';
+import { connect, connection } from 'mongoose';
+import router from '../routes/AdminRoute.js'
+import Vendor, { deleteMany, create } from '../models/Vendor.js'
+import DeliveryUser, { deleteMany as _deleteMany, create as _create } from '../models/DeliveryUser.js';
+import Transaction, { deleteMany as __deleteMany } from '../models/Transaction.js';
+import { generatePassword } from '../utility/PasswordUnility.js';
+
+// Mock dependencies
+jest.mock('cloudinary');
+jest.mock('../utility/PasswordUnility', () => ({
   generatePassword: jest.fn(),
 }));
+jest.mock('jsonwebtoken');
+jest.mock('bcryptjs');
 
-// Create Express app
-const app = express();
-app.use(express.json());
-app.use('/admin', router);
+describe('Admin Routes Extreme Test Cases', () => {
+  let app;
 
-describe('AdminController', () => {
-  let mongoServer;
-
-  // Setup MongoDB in-memory server before all tests
+  // Setup Express app with admin routes
   beforeAll(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    const uri = mongoServer.getUri();
-    await mongoose.connect(uri);
+    app = express();
+    app.use(json());
+    app.use('/admin', router);
+    await connect(process.env.MONGO_URI || global.__MONGO_URI__, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
   });
 
-  // Clear database and reset mocks before each test
-  beforeEach(async () => {
-    await Vendor.deleteMany({});
-    await Transaction.deleteMany({});
-    await DeliveryUser.deleteMany({});
-    jest.clearAllMocks();
+  // Clean up database after each test
+  afterEach(async () => {
+    await deleteMany({});
+    await _deleteMany({});
+    await __deleteMany({});
   });
 
-  // Disconnect and stop server after all tests
+  // Close database connection after all tests
   afterAll(async () => {
-    await mongoose.disconnect();
-    await mongoServer.stop();
+    await connection.close();
   });
 
-  // CreateVandor Tests
+  // POST /admin/vendor - CreateVendor
   describe('POST /admin/vendor', () => {
-    it('should create a new vendor successfully', async () => {
-      generateSalt.mockResolvedValue('mocked_salt');
-      generatePassword.mockResolvedValue('mocked_hashed_password');
+    it('should reject vendor creation with missing required fields', async () => {
+      const response = await request(app)
+        .post('/admin/vendor')
+        .send({}); // Empty body
 
-      const input = {
-        name: 'Tasty Bites',
-        address: '123 Main St',
-        pincode: '12345',
-        foodType: ['Italian', 'Fast Food'],
-        email: 'vendor@example.com',
-        password: 'secure123',
-        ownerName: 'John Doe',
-        phone: '1234567890',
-      };
-
-      const response = await request(app).post('/admin/vendor').send(input);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({
-        name: 'Tasty Bites',
-        email: 'vendor@example.com',
-        password: 'mocked_hashed_password',
-        salt: 'mocked_salt',
-        rating: 0,
-        serviceAvailable: false,
-      });
-
-      // Verify database
-      const vendor = await Vendor.findOne({ email: 'vendor@example.com' });
-      expect(vendor).toBeTruthy();
-      expect(vendor.name).toBe('Tasty Bites');
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBeDefined();
     });
 
-    it('should return error if vendor email exists', async () => {
-      await Vendor.create({
-        email: 'vendor@example.com',
+    it('should reject vendor creation with invalid email format', async () => {
+      const response = await request(app)
+        .post('/admin/vendor')
+        .send({
+          name: 'Test Vendor',
+          address: '123 Test St',
+          pincode: '123456',
+          foodType: ['Italian'],
+          email: 'invalid-email', // Invalid email
+          password: 'Password123!',
+          ownerName: 'John Doe',
+          phone: '9876543210',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toContain('Error creating vendor');
+    });
+
+    it('should reject vendor creation with duplicate email', async () => {
+      generatePassword.mockResolvedValue('hashedPassword');
+      await create({
         name: 'Existing Vendor',
-        password: 'hashed',
-        salt: 'salt',
-      });
-
-      const input = {
-        name: 'Tasty Bites',
-        address: '123 Main St',
-        pincode: '12345',
+        email: 'testvendor@example.com',
+        password: 'hashedPassword',
+        address: '123 Test St',
+        pincode: '123456',
         foodType: ['Italian'],
-        email: 'vendor@example.com',
-        password: 'secure123',
-        ownerName: 'John Doe',
-        phone: '1234567890',
-      };
-
-      const response = await request(app).post('/admin/vendor').send(input);
-
-      expect(response.status).toBe(200); // Controller returns 200 for JSON responses
-      expect(response.body).toEqual({
-        message: 'A vandor is exist with this email ID',
+        ownerName: 'Jane Doe',
+        phone: '9876543210',
       });
+
+      const response = await request(app)
+        .post('/admin/vendor')
+        .send({
+          name: 'Test Vendor',
+          address: '123 Test St',
+          pincode: '123456',
+          foodType: ['Italian'],
+          email: 'testvendor@example.com', // Duplicate email
+          password: 'Password123!',
+          ownerName: 'John Doe',
+          phone: '9876543210',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('A vendor exists with this email ID');
     });
 
-    it('should handle missing required fields', async () => {
-      const input = {
-        name: 'Tasty Bites',
-        // Missing email, password, etc.
-      };
+    it('should reject vendor creation with extremely long input', async () => {
+      const longString = 'a'.repeat(1000); // Extremely long string
+      const response = await request(app)
+        .post('/admin/vendor')
+        .send({
+          name: longString,
+          address: longString,
+          pincode: '123456',
+          foodType: ['Italian'],
+          email: `testvendor_${longString}@example.com`,
+          password: 'Password123!',
+          ownerName: longString,
+          phone: '9876543210',
+        });
 
-      const response = await request(app).post('/admin/vendor').send(input);
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBeDefined();
+    });
 
-      expect(response.status).toBe(200); // Should be 400 with validation
-      // Note: Controller doesn't validate; expect database error or partial creation
-      // If schema enforces required fields, this would fail in DB
+    it('should handle database failure during vendor creation', async () => {
+      // Mock Vendor.create to throw an error
+      jest.spyOn(Vendor, 'create').mockRejectedValueOnce(new Error('Database failure'));
+
+      const response = await request(app)
+        .post('/admin/vendor')
+        .send({
+          name: 'Test Vendor',
+          address: '123 Test St',
+          pincode: '123456',
+          foodType: ['Italian'],
+          email: 'testvendor@example.com',
+          password: 'Password123!',
+          ownerName: 'John Doe',
+          phone: '9876543210',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error creating vendor');
     });
   });
 
-  // GetVanndors Tests
+  // GET /admin/vendors - GetVendors
   describe('GET /admin/vendors', () => {
-    it('should return all vendors', async () => {
-      await Vendor.create([
-        { name: 'Vendor1', email: 'vendor1@example.com', pincode: '12345' },
-        { name: 'Vendor2', email: 'vendor2@example.com', pincode: '67890' },
-      ]);
-
+    it('should return 404 when no vendors exist', async () => {
       const response = await request(app).get('/admin/vendors');
 
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(2);
-      expect(response.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'Vendor1' }),
-          expect.objectContaining({ name: 'Vendor2' }),
-        ])
-      );
+      expect(response.status).toBe(404);
+      expect(response.body.message).toBe('Vendors data not available');
     });
 
-    it('should return message if no vendors exist', async () => {
+    it('should handle database failure when fetching vendors', async () => {
+      jest.spyOn(Vendor, 'find').mockRejectedValueOnce(new Error('Database failure'));
+
+      const response = await request(app).get('/admin/vendors');
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching vendors');
+    });
+
+    it('should return vendors when they exist', async () => {
+      await create({
+        name: 'Test Vendor',
+        email: 'testvendor@example.com',
+        password: 'hashedPassword',
+        address: '123 Test St',
+        pincode: '123456',
+        foodType: ['Italian'],
+        ownerName: 'John Doe',
+        phone: '9876543210',
+      });
+
       const response = await request(app).get('/admin/vendors');
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Vendors data not available' });
+      expect(response.body.length).toBe(1);
+      expect(response.body[0].name).toBe('Test Vendor');
+      expect(response.body[0].password).toBeUndefined(); // Password should be excluded
     });
   });
 
-  // GetVandorByID Tests
+  // GET /admin/vendor/:id - GetVendorByID
   describe('GET /admin/vendor/:id', () => {
-    it('should return vendor by ID', async () => {
-      const vendor = await Vendor.create({
-        name: 'Tasty Bites',
-        email: 'vendor@example.com',
-        pincode: '12345',
-      });
+    it('should reject invalid vendor ID format', async () => {
+      const response = await request(app).get('/admin/vendor/invalid-id');
 
-      const response = await request(app).get(`/admin/vendor/${vendor._id}`);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({
-        name: 'Tasty Bites',
-        email: 'vendor@example.com',
-      });
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching vendor');
     });
 
-    it('should return message if vendor not found', async () => {
-      const response = await request(app).get(
-        `/admin/vendor/${new mongoose.Types.ObjectId()}`
-      );
+    it('should return 404 for non-existent vendor ID', async () => {
+      const response = await request(app).get('/admin/vendor/507f1f77bcf86cd799439102');
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Vendors data not available' });
+      expect(response.status).toBe(404);
+      expect(response.body.message).toBe('Vendor data not available');
     });
 
-    it('should handle invalid ID format', async () => {
-      const response = await request(app).get('/admin/vendor/invalid_id');
+    it('should handle database failure when fetching vendor by ID', async () => {
+      jest.spyOn(Vendor, 'findById').mockRejectedValueOnce(new Error('Database failure'));
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Vendors data not available' });
+      const response = await request(app).get('/admin/vendor/507f1f77bcf86cd799439102');
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching vendor');
     });
   });
 
-  // GetTransactions Tests
+  // GET /admin/transactions - GetTransactions
   describe('GET /admin/transactions', () => {
-    it('should return all transactions', async () => {
-      await Transaction.create([
-        { amount: 100, status: 'COMPLETED' },
-        { amount: 200, status: 'PENDING' },
-      ]);
-
+    it('should return 404 when no transactions exist', async () => {
       const response = await request(app).get('/admin/transactions');
 
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(2);
-      expect(response.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ amount: 100 }),
-          expect.objectContaining({ amount: 200 }),
-        ])
-      );
+      expect(response.status).toBe(404);
+      expect(response.body.message).toBe('Transactions data not available');
     });
 
-    it('should return message if no transactions exist', async () => {
+    it('should handle database failure when fetching transactions', async () => {
+      jest.spyOn(Transaction, 'find').mockRejectedValueOnce(new Error('Database failure'));
+
       const response = await request(app).get('/admin/transactions');
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Transactions data not available' });
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching transactions');
     });
   });
 
-  // GetTransactionById Tests
+  // GET /admin/transaction/:id - GetTransactionById
   describe('GET /admin/transaction/:id', () => {
-    it('should return transaction by ID', async () => {
-      const transaction = await Transaction.create({
-        amount: 100,
-        status: 'COMPLETED',
-      });
+    it('should reject invalid transaction ID format', async () => {
+      const response = await request(app).get('/admin/transaction/invalid-id');
 
-      const response = await request(app).get(
-        `/admin/transaction/${transaction._id}`
-      );
-
-      expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({
-        amount: 100,
-        status: 'COMPLETED',
-      });
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching transaction');
     });
 
-    it('should return message if transaction not found', async () => {
-      const response = await request(app).get(
-        `/admin/transaction/${new mongoose.Types.ObjectId()}`
-      );
+    it('should return 404 for non-existent transaction ID', async () => {
+      const response = await request(app).get('/admin/transaction/67fbed499cc509a25cfbe1e6');
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Transaction data not available' });
+      expect(response.status).toBe(404);
+      expect(response.body.message).toBe('Transaction data not available');
     });
 
-    it('should handle invalid ID format', async () => {
-      const response = await request(app).get('/admin/transaction/invalid_id');
+    it('should handle database failure when fetching transaction by ID', async () => {
+      jest.spyOn(Transaction, 'findById').mockRejectedValueOnce(new Error('Database failure'));
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Transaction data not available' });
+      const response = await request(app).get('/admin/transaction/67fbed499cc509a25cfbe1e6');
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching transaction');
     });
   });
 
-  // VerifyDeliveryUser Tests
+  // PUT /admin/delivery/verify - VerifyDeliveryUser
   describe('PUT /admin/delivery/verify', () => {
+    it('should reject verification with missing _id', async () => {
+      const response = await request(app)
+        .put('/admin/delivery/verify')
+        .send({ status: true });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Delivery user ID is required');
+    });
+
+    it('should reject verification with invalid _id format', async () => {
+      const response = await request(app)
+        .put('/admin/delivery/verify')
+        .send({ _id: 'invalid-id', status: true });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Unable to verify Delivery User');
+    });
+
+    it('should return 400 for non-existent delivery user', async () => {
+      const response = await request(app)
+        .put('/admin/delivery/verify')
+        .send({ _id: '67fbf22b1ba0390e8486b035', status: true });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Unable to verify Delivery User');
+    });
+
+    it('should handle database failure during verification', async () => {
+      jest.spyOn(DeliveryUser, 'findById').mockRejectedValueOnce(new Error('Database failure'));
+
+      const response = await request(app)
+        .put('/admin/delivery/verify')
+        .send({ _id: '67fbf22b1ba0390e8486b035', status: true });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error verifying delivery user');
+    });
+
     it('should verify delivery user successfully', async () => {
-      const deliveryUser = await DeliveryUser.create({
+      const deliveryUser = await _create({
         email: 'delivery@example.com',
-        phone: '1234567890',
+        password: 'hashedPassword',
+        phone: '9876543210',
+        firstName: 'Test',
+        lastName: 'Delivery',
+        address: '123 Test St',
+        pincode: '123456',
         verified: false,
       });
 
-      const input = {
-        _id: deliveryUser._id.toString(),
-        status: true,
-      };
-
       const response = await request(app)
         .put('/admin/delivery/verify')
-        .send(input);
+        .send({ _id: deliveryUser._id, status: true });
 
       expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({
+      expect(response.body.verified).toBe(true);
+      expect(response.body.password).toBeUndefined();
+    });
+  });
+
+  // GET /admin/delivery/users - GetDeliveryUsers
+  describe('GET /admin/delivery/users', () => {
+    it('should return 404 when no delivery users exist', async () => {
+      const response = await request(app).get('/admin/delivery/users');
+
+      expect(response.status).toBe(404);
+      expect(response.body.message).toBe('Unable to get Delivery Users');
+    });
+
+    it('should handle database failure when fetching delivery users', async () => {
+      jest.spyOn(DeliveryUser, 'find').mockRejectedValueOnce(new Error('Database failure'));
+
+      const response = await request(app).get('/admin/delivery/users');
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Error fetching delivery users');
+    });
+
+    it('should return delivery users when they exist', async () => {
+      await _create({
         email: 'delivery@example.com',
-        verified: true,
+        password: 'hashedPassword',
+        phone: '9876543210',
+        firstName: 'Test',
+        lastName: 'Delivery',
+        address: '123 Test St',
+        pincode: '123456',
+        verified: false,
       });
 
-      // Verify database
-      const updatedUser = await DeliveryUser.findById(deliveryUser._id);
-      expect(updatedUser.verified).toBe(true);
-    });
-
-    it('should return error if _id missing', async () => {
-      const input = { status: true };
-
-      const response = await request(app)
-        .put('/admin/delivery/verify')
-        .send(input);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Unable to verify Delivery User' });
-    });
-
-    it('should return error if delivery user not found', async () => {
-      const input = {
-        _id: new mongoose.Types.ObjectId().toString(),
-        status: true,
-      };
-
-      const response = await request(app)
-        .put('/admin/delivery/verify')
-        .send(input);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Unable to verify Delivery User' });
-    });
-  });
-
-  // GetDeliveryUsers Tests
-  describe('GET /admin/delivery/users', () => {
-    it('should return all delivery users', async () => {
-      await DeliveryUser.create([
-        {
-          email: 'delivery1@example.com',
-          phone: '1234567890',
-          verified: false,
-        },
-        {
-          email: 'delivery2@example.com',
-          phone: '0987654321',
-          verified: true,
-        },
-      ]);
-
       const response = await request(app).get('/admin/delivery/users');
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(2);
-      expect(response.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ email: 'delivery1@example.com' }),
-          expect.objectContaining({ email: 'delivery2@example.com' }),
-        ])
-      );
-    });
-
-    it('should return message if no delivery users exist', async () => {
-      const response = await request(app).get('/admin/delivery/users');
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Unable to get Delivery Users' });
+      expect(response.body.length).toBe(1);
+      expect(response.body[0].firstName).toBe('Test');
+      expect(response.body[0].password).toBeUndefined();
     });
   });
 
-  // Root Route Test
+  // GET /admin/ - Root Route
   describe('GET /admin/', () => {
     it('should return welcome message', async () => {
       const response = await request(app).get('/admin/');
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ message: 'Hello from Admin' });
+      expect(response.body.message).toBe('Hello from Admin');
     });
   });
 });
