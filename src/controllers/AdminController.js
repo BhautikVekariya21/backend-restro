@@ -55,7 +55,6 @@ export const CreateVendor = async (req, res) => {
   }
 };
 
-
 export const GetVendors = async (req, res) => {
   try {
     console.log('Fetching all vendors');
@@ -70,7 +69,6 @@ export const GetVendors = async (req, res) => {
     return res.status(400).json({ message: 'Error fetching vendors', error: error.message });
   }
 };
-
 
 export const GetVendorByID = async (req, res) => {
   const vendorId = req.params.id;
@@ -89,7 +87,6 @@ export const GetVendorByID = async (req, res) => {
   }
 };
 
-
 export const GetTransactions = async (req, res) => {
   try {
     console.log('Fetching all transactions');
@@ -105,7 +102,6 @@ export const GetTransactions = async (req, res) => {
   }
 };
 
-
 export const GetTransactionById = async (req, res) => {
   try {
     console.log(`Fetching transaction ${req.params.id}`);
@@ -120,7 +116,6 @@ export const GetTransactionById = async (req, res) => {
     return res.status(400).json({ message: 'Error fetching transaction', error: error.message });
   }
 };
-
 
 export const VerifyDeliveryUser = async (req, res) => {
   const { _id, status } = req.body;
@@ -149,7 +144,6 @@ export const VerifyDeliveryUser = async (req, res) => {
     return res.status(400).json({ message: 'Error verifying delivery user', error: error.message });
   }
 };
-
 
 export const GetDeliveryUsers = async (req, res) => {
   try {
