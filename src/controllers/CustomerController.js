@@ -181,7 +181,6 @@ export const CustomerVerify = async (req, res) => {
   }
 };
 
-// Other functions remain unchanged
 export const RequestOtp = async (req, res) => {
   const customer = req.user;
 
@@ -276,7 +275,6 @@ export const EditCustomerProfile = async (req, res) => {
     return res.status(400).json({ message: 'Error updating profile', error: error.message });
   }
 };
-
 
 const validateTransaction = async (txnId) => {
   try {
@@ -524,7 +522,6 @@ export const DeleteCart = async (req, res) => {
     return res.status(400).json({ message: 'Error clearing cart', error: error.message });
   }
 };
-
 
 export const VerifyOffer = async (req, res) => {
   const user = req.user;
