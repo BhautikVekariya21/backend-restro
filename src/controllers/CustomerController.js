@@ -377,7 +377,6 @@ export const CreateOrder = async (req, res) => {
 
 export const GetOrders = async (req, res) => {
   const customer = req.user;
-
   try {
     if (!customer) {
       console.log('No authenticated customer found');
